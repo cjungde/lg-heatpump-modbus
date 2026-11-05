@@ -14,6 +14,8 @@ import csv
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 import lg_heatpump_modbus.logic.flush_pulse as fp
 
 DATA = Path(__file__).parent / "data"
@@ -175,7 +177,8 @@ def test_the_runtime_survives_the_real_ramp() -> None:
     recorded data: an earlier version recorded none for every real pulse.
     """
     t = _tracker()
-    _run(t, _hold(1500, 60) + [960] + RAMP + _hold(3600, 3) + [1620, 900])
+    # as recorded on 2026-11-02 01:38 UTC: 30 s at the top, then down
+    _run(t, _hold(1500, 60) + [960] + RAMP + [3600, 3600, 3300, 1620, 900])
     assert t.last_pulse is not None
     assert t.last_pulse.peak_rpm == 3600
     assert 59 <= t.last_pulse.runtime_minutes <= 61
@@ -297,6 +300,75 @@ def test_the_lead_time_is_configurable() -> None:
     assert round((fired_at - T0).total_seconds() / 60, 1) == 50.5
 
 
+# --- a warning that no pulse follows ----------------------------------
+
+
+def _kinds(events: list) -> list[str]:
+    return [e for _, evs in events for e in evs]
+
+
+def test_a_stop_after_the_warning_cancels_it() -> None:
+    """Whoever acted on the warning must hear that no pulse is coming."""
+    t = _tracker()
+    events = _run(t, _hold(1500, 59) + [0, 0])
+    assert _kinds(events) == [fp.EVENT_IMMINENT, fp.EVENT_CANCELLED]
+
+
+def test_leaving_the_band_without_a_ramp_cancels_the_warning() -> None:
+    """Up to 1800 rpm and staying there: the 90 s for a ramp run out."""
+    t = _tracker()
+    events = _run(t, _hold(1500, 59) + _hold(1800, 3))
+    assert _kinds(events) == [fp.EVENT_IMMINENT, fp.EVENT_CANCELLED]
+
+
+def test_a_defrost_after_the_warning_cancels_it() -> None:
+    t = _tracker()
+    events = _run(t, _hold(1500, 59) + [(4020, {"defrosting": True})] * 3)
+    assert _kinds(events) == [fp.EVENT_IMMINENT, fp.EVENT_CANCELLED]
+
+
+def test_a_real_pulse_is_never_cancelled() -> None:
+    t = _tracker()
+    events = _run(t, _hold(1500, 60) + [960] + RAMP + [3600, 3600, 3300, 1620, 900])
+    assert _kinds(events) == [fp.EVENT_IMMINENT, fp.EVENT_STARTED, fp.EVENT_FINISHED]
+
+
+def test_nothing_is_cancelled_without_a_warning() -> None:
+    t = _tracker()
+    assert _kinds(_run(t, _hold(1500, 30) + [0])) == []
+
+
+def test_a_climb_far_longer_than_a_flush_is_dropped() -> None:
+    """A tank charge that climbs out of the band runs for minutes.
+
+    On 27 October 2026 the earlier tracker reported one as a 500 s 'pulse'. A
+    flush lasts 40-60 s.
+    """
+    t = _tracker()
+    events = _run(t, _hold(1500, 59) + [960] + RAMP + _hold(3300, 8) + [1500])
+    assert fp.EVENT_FINISHED not in _kinds(events)
+    assert _kinds(events)[-1] == fp.EVENT_CANCELLED
+    assert t.last_pulse is None
+
+
+# --- a slower poll ------------------------------------------------------
+
+
+def test_an_earlier_exit_does_not_lend_its_runtime_to_a_later_pulse() -> None:
+    """At 30 s a pulse can jump from 1500 to 3600 rpm between two polls.
+
+    The tracker then has no exit of its own for this run and must not use the
+    one from an earlier excursion: that reported 20 minutes for a 61 minute run.
+    """
+    slow = timedelta(seconds=30)
+    t = _tracker()
+    samples = _hold(1500, 20, slow) + [1800, 1800] + _hold(1500, 61, slow)
+    samples += [3600, 3600, 1500]
+    _run(t, samples, step=slow)
+    assert t.last_pulse is not None
+    assert 60 <= t.last_pulse.runtime_minutes <= 62
+
+
 # --- replay over recorded data ------------------------------------------
 
 
@@ -309,14 +381,15 @@ def _data_rows(name: str) -> list[dict[str, str]]:
         return list(csv.DictReader(line for line in handle if not line.startswith("#")))
 
 
-def test_replay_over_48_recorded_hours_finds_every_logged_pulse() -> None:
+@pytest.mark.parametrize("poll_seconds", [10, 30])
+def test_replay_over_48_recorded_hours_finds_every_logged_pulse(poll_seconds: int) -> None:
     """The installation's own log recorded 30 pulses in this window.
 
     The recording is what the integration read, one row per change, polled every
-    10 s. Every logged pulse has exactly one started event within the 40 s the log
-    lags behind, each preceded by one warning and followed by one finish, and the
-    runtime recorded with the pulse is the 60 minutes measured on this unit. The
-    one extra pulse is the one at 23:28 UTC, logged after this window ends.
+    10 s; replayed at 10 s and, sampled down, at 30 s. Every logged pulse has exactly
+    one started event within the 40 s the log lags behind, each preceded by one
+    warning and followed by one finish, and the runtime recorded with the pulse is
+    the 60 minutes measured on this unit. The one extra pulse is the one at 23:28 UTC, logged after this window ends.
     """
     changes = [(_utc(r["timestamp_utc"]), r) for r in _data_rows("flush_pulse_recording.csv")]
     logged = [_utc(r["pulse_logged_utc"]) for r in _data_rows("flush_pulse_logged.csv")]
@@ -341,7 +414,7 @@ def test_replay_over_48_recorded_hours_finds_every_logged_pulse() -> None:
             events.append((event, now))
             if event == fp.EVENT_STARTED:
                 runtimes.append(tracker.pulse_runtime_minutes)
-        now += timedelta(seconds=10)
+        now += timedelta(seconds=poll_seconds)
 
     started = [t for e, t in events if e == fp.EVENT_STARTED]
     assert len(started) == len(logged) + 1
@@ -349,4 +422,5 @@ def test_replay_over_48_recorded_hours_finds_every_logged_pulse() -> None:
         assert min(abs((s - pulse).total_seconds()) for s in started) <= 60
     kinds = [e for e, _ in events]
     assert kinds.count(fp.EVENT_IMMINENT) == kinds.count(fp.EVENT_FINISHED) == len(started)
+    assert fp.EVENT_CANCELLED not in kinds
     assert all(r is not None and 59 <= r <= 61 for r in runtimes)

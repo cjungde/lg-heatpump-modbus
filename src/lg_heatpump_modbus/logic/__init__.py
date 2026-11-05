@@ -11,6 +11,7 @@ from .flow_gate import (
     gate_flow_rate,
 )
 from .flush_pulse import (
+    EVENT_CANCELLED,
     EVENT_FINISHED,
     EVENT_IMMINENT,
     EVENT_STARTED,
@@ -20,6 +21,7 @@ from .flush_pulse import (
 )
 
 __all__ = [
+    "EVENT_CANCELLED",
     "EVENT_FINISHED",
     "EVENT_IMMINENT",
     "EVENT_STARTED",
