@@ -16,6 +16,7 @@ from modbus_connection import (
 
 from .configurations.models import DEFAULT_MODEL, ModelDefinition, get_model
 from .data_model import LgComponent
+from .logic import gate_flow_rate
 from .subsystems import Controls, DeviceInformation, Sensors, States, Switches
 
 if TYPE_CHECKING:
@@ -116,6 +117,25 @@ class LgHeatPump:
         that shared sensor reflects the DHW loop instead, so this returns ``None`` in that case.
         """
         return None if self.states.dhw_heating else self.sensors.water_outlet_temperature
+
+    @property
+    def water_flow_rate(self) -> float | None:
+        """
+        Return the water flow rate in l/min, ``0.0`` while the water pump is off.
+
+        With the pump stopped the flow sensor reports its range floor (5.0 l/min),
+        which is not a flow. This value is corrected with the pump bit (see
+        :func:`~lg_heatpump_modbus.logic.gate_flow_rate`). In :attr:`debug` mode, and
+        through :attr:`water_flow_rate_raw`, the value the heat pump reported is returned.
+        """
+        if self.debug:
+            return self.water_flow_rate_raw
+        return gate_flow_rate(self.water_flow_rate_raw, self.states.water_pump)
+
+    @property
+    def water_flow_rate_raw(self) -> float | None:
+        """Return the water flow rate exactly as the heat pump reported it."""
+        return self.sensors.water_flow_rate
 
     @property
     def manufacturer(self) -> str:
