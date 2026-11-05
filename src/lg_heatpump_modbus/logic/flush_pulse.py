@@ -62,6 +62,10 @@ from datetime import datetime, timedelta
 EVENT_IMMINENT = "flush_pulse_imminent"
 EVENT_STARTED = "flush_pulse_started"
 EVENT_FINISHED = "flush_pulse_finished"
+#: A warning went out, but no pulse followed: the compressor stopped, left the
+#: band without ramping, defrosted, or the climb was not a flush. Lets a consumer
+#: undo whatever it did on the warning.
+EVENT_CANCELLED = "flush_pulse_cancelled"
 
 
 @dataclass(frozen=True)
@@ -85,6 +89,10 @@ class FlushPulseConfig:
     #: the band to the first above 2900 rpm. A slower climb, such as the 118 s one
     #: after a defrost, is a load change.
     ramp_window_seconds: int = 90
+    #: Longest a flush runs from the first sample above 2900 rpm to the last.
+    #: Measured 40-60 s; a tank charge that ramps out of the band runs for many
+    #: minutes and is dropped once it passes this.
+    max_pulse_seconds: int = 120
 
 
 @dataclass(frozen=True)
@@ -138,6 +146,8 @@ class FlushPulseTracker:
     #: there; a ramp that does not is an ordinary load change.
     _band_exit_runtime: float | None = None
     _band_exit_at: datetime | None = None
+    #: A warning went out and neither a finish nor a cancellation has followed.
+    _announced: bool = False
 
     # -- what the entities read ------------------------------------------
 
@@ -207,8 +217,14 @@ class FlushPulseTracker:
                 # one, and let the clock restart from the end of the ramp.
                 self._in_defrost = True
                 self._abandon_pulse()
-                return ()
+                return self._cancel()
+            if (now - self.pulse_started).total_seconds() > self.config.max_pulse_seconds:
+                # Far longer than a flush: a load change or a tank charge that
+                # happened to climb out of the band.
+                self._abandon_pulse()
+                return self._cancel()
             if rpm <= self.config.pulse_rpm:
+                self._announced = False
                 events.append(EVENT_FINISHED)
                 self.last_pulse = PulseRecord(
                     started=self.pulse_started,
@@ -226,13 +242,13 @@ class FlushPulseTracker:
                 self._in_defrost = True
                 self.low_load_since = None
                 self._imminent_fired = False
-                return ()
+                return self._cancel()
             if not self._ramp_started_in_band(now):
                 # Running above 2900 rpm, but not out of the low-load band: a
                 # high-load phase, not a flush.
                 self.low_load_since = None
                 self._imminent_fired = False
-                return ()
+                return self._cancel()
             self.pulse_started = now
             self.pulse_peak_rpm = rpm
             # The ramp left the band a few polls ago, so the clock was already
@@ -255,7 +271,7 @@ class FlushPulseTracker:
             self._imminent_fired = False
             self._band_exit_runtime = None
             self._band_exit_at = None
-            return ()
+            return self._cancel()
 
         if rpm > self.config.low_load_rpm:
             # Running, but out of the band: the unit's timer is not counting.
@@ -264,6 +280,9 @@ class FlushPulseTracker:
                 self._band_exit_at = now
             self.low_load_since = None
             self._imminent_fired = False
+            if self._band_exit_at is None or not self._ramp_started_in_band(now):
+                # Out of the band for longer than any ramp: no pulse is coming.
+                return self._cancel()
             return ()
 
         # In the band. Note the inclusive comparison above: the unit sits at
@@ -276,13 +295,18 @@ class FlushPulseTracker:
             pass
 
         if self.low_load_since is None:
+            # Back in the band: the clock starts again, and an earlier exit
+            # no longer belongs to the run that is now being timed.
             self.low_load_since = now
             self._imminent_fired = False
-            return ()
+            self._band_exit_runtime = None
+            self._band_exit_at = None
+            return self._cancel()
 
         remaining = self.minutes_remaining()
         if not self._imminent_fired and remaining is not None and remaining * 60 <= self.config.lead_seconds:
             self._imminent_fired = True
+            self._announced = True
             events.append(EVENT_IMMINENT)
         return tuple(events)
 
@@ -295,9 +319,17 @@ class FlushPulseTracker:
         self._in_defrost = False
         self._band_exit_runtime = None
         self._band_exit_at = None
+        self._announced = False
         self._now = None
 
     # -- internals -------------------------------------------------------
+
+    def _cancel(self) -> tuple[str, ...]:
+        """Withdraw an outstanding warning, if there is one."""
+        if not self._announced:
+            return ()
+        self._announced = False
+        return (EVENT_CANCELLED,)
 
     def _ramp_started_in_band(self, now: datetime) -> bool:
         """Whether a ramp above the pulse threshold began in the low-load band."""
