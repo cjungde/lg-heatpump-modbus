@@ -1,6 +1,6 @@
-"""The flush-pulse tracker, against the behaviour measured on the unit.
+"""The ORP tracker, against the behaviour measured on the unit.
 
-Every threshold in ``logic/flush_pulse.py`` came out of 29 logged pulses over seven
+Every threshold in ``logic/oil_return_pulse.py`` came out of 29 logged pulses over seven
 days, and three of them were only found by getting them wrong first: the inclusive
 comparison at 1500 rpm, a stop resetting the clock instead of pausing it, and the
 ramp belonging to the pulse rather than to the run-up. Those three are what these
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-import lg_heatpump_modbus.logic.flush_pulse as fp
+import lg_heatpump_modbus.logic.oil_return_pulse as fp
 
 DATA = Path(__file__).parent / "data"
 
@@ -25,8 +25,8 @@ T0 = datetime(2026, 10, 18, 8, 0, 0, tzinfo=UTC)
 POLL = timedelta(seconds=10)
 
 
-def _tracker(**kwargs: int | float) -> fp.FlushPulseTracker:
-    return fp.FlushPulseTracker(config=fp.FlushPulseConfig(**kwargs))
+def _tracker(**kwargs: int | float) -> fp.OilReturnPulseTracker:
+    return fp.OilReturnPulseTracker(config=fp.OilReturnPulseConfig(**kwargs))
 
 
 def _run(tracker, samples, start=T0, step=POLL):
@@ -188,7 +188,7 @@ def test_a_climb_that_did_not_start_in_the_band_is_not_a_pulse() -> None:
     """Running at 1800 and then going to 3000 is a load change, not oil return.
 
     The unit's timer only counts at or below 25 Hz, so a ramp that does not begin
-    there cannot be the flush.
+    there cannot be the ORP.
     """
     t = _tracker()
     events = _run(t, _hold(1800, 30) + [2400, 3000, 3300] + _hold(3300, 5) + [1800])
@@ -200,7 +200,7 @@ def test_a_climb_that_did_not_start_in_the_band_is_not_a_pulse() -> None:
 def test_a_slow_climb_after_a_defrost_is_not_a_pulse() -> None:
     """Recorded 2026-11-02 04:00 UTC: 118 s from 2400 to above 2900 rpm.
 
-    A flush climbs from the band to 2900 rpm in 30 s. This one left the band just
+    An ORP climbs from the band to 2900 rpm in 30 s. This one left the band just
     after a defrost and took four times as long.
     """
     t = _tracker()
@@ -220,7 +220,7 @@ def test_reset_forgets_the_clock_and_the_last_pulse() -> None:
     assert not t.pulse_active
 
 
-# --- flush against defrost ----------------------------------------------
+# --- ORP against defrost ------------------------------------------------
 
 
 def test_a_defrost_is_not_reported_as_a_pulse() -> None:
@@ -240,7 +240,7 @@ def test_a_defrost_is_not_reported_as_a_pulse() -> None:
 def test_a_late_defrost_flag_still_does_not_produce_a_pulse() -> None:
     """The flag can arrive a poll after the ramp.
 
-    4020 rpm alone is enough: a flush peaks at exactly 3600, a defrost at 4020-4080.
+    4020 rpm alone is enough: an ORP peaks at exactly 3600, a defrost at 4020-4080.
     """
     t = _tracker()
     samples = _hold(1500, 60) + [3600, 4020, (4080, {"defrosting": True}), 1500]
@@ -338,11 +338,11 @@ def test_nothing_is_cancelled_without_a_warning() -> None:
     assert _kinds(_run(t, _hold(1500, 30) + [0])) == []
 
 
-def test_a_climb_far_longer_than_a_flush_is_dropped() -> None:
+def test_a_climb_far_longer_than_an_orp_is_dropped() -> None:
     """A tank charge that climbs out of the band runs for minutes.
 
-    On 27 October 2026 the earlier tracker reported one as a 500 s 'pulse'. A
-    flush lasts 40-60 s.
+    On 27 October 2026 the earlier tracker reported one as a 500 s 'pulse'. An
+    ORP lasts 40-60 s.
     """
     t = _tracker()
     events = _run(t, _hold(1500, 59) + [960] + RAMP + _hold(3300, 8) + [1500])
@@ -391,11 +391,11 @@ def test_replay_over_48_recorded_hours_finds_every_logged_pulse(poll_seconds: in
     warning and followed by one finish, and the runtime recorded with the pulse is
     the 60 minutes measured on this unit. The one extra pulse is the one at 23:28 UTC, logged after this window ends.
     """
-    changes = [(_utc(r["timestamp_utc"]), r) for r in _data_rows("flush_pulse_recording.csv")]
-    logged = [_utc(r["pulse_logged_utc"]) for r in _data_rows("flush_pulse_logged.csv")]
+    changes = [(_utc(r["timestamp_utc"]), r) for r in _data_rows("orp_recording.csv")]
+    logged = [_utc(r["pulse_logged_utc"]) for r in _data_rows("orp_logged.csv")]
     assert len(logged) == 30
 
-    tracker = fp.FlushPulseTracker()
+    tracker = fp.OilReturnPulseTracker()
     events: list[tuple[str, datetime]] = []
     runtimes: list[float | None] = []
     now, end = changes[0][0], _utc("2026-11-04T00:00:00Z")

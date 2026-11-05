@@ -1,4 +1,7 @@
-"""The oil-return flush pulse: when it comes, when it is running, when it is over.
+"""The oil return pulse (ORP): when it comes, when it is running, when it is over.
+
+The name follows lg-heatpump/meta discussion 3; the same event is also called the
+flush pulse (German: Spülpuls).
 
 Every so often the unit runs the compressor up to 60 Hz for about a minute. It
 is returning oil from the refrigerant circuit to the compressor, and it is
@@ -7,7 +10,7 @@ watching the compressor, and it is the one event an outside controller wants to
 know about in advance.
 
 THE TRIGGER, measured rather than assumed. On a HN1639HC NK0 over seven days,
-29 pulses: the unit flushes after **60.5 minutes of uninterrupted running at or
+29 pulses: the unit runs an ORP after **60.5 minutes of uninterrupted running at or
 below 25 Hz** (1500 rpm). All 29 fell in the 55-65 minute band, median 60.3, and
 24 of 24 long low-load phases ended in a pulse with none skipped. Three details
 cost time to find:
@@ -24,11 +27,11 @@ A second account agrees on the threshold from a different direction: a forum
 post gives "below 25 Hz for longer than 60 minutes", unsourced. 25 Hz is 1500
 rpm, so the two readings are the same rule.
 
-TELLING A FLUSH FROM A DEFROST. Both run the compressor up, and for two days in
+TELLING AN ORP FROM A DEFROST. Both run the compressor up, and for two days in
 October 2026 that cost us two misreadings. They separate cleanly on two
 independent signals:
 
-| | flush pulse | defrost |
+| | ORP | defrost |
 |---|---|---|
 | peak | **exactly 3600 rpm** (60.0 Hz) | 4020-4080 rpm (67-68 Hz) |
 | length | 40-60 s | about 90 s |
@@ -57,24 +60,24 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-#: Event names returned by `FlushPulseTracker.update`. An integration that fires
+#: Event names returned by `OilReturnPulseTracker.update`. An integration that fires
 #: one bus event and distinguishes by `type` can build device triggers on them.
-EVENT_IMMINENT = "flush_pulse_imminent"
-EVENT_STARTED = "flush_pulse_started"
-EVENT_FINISHED = "flush_pulse_finished"
+EVENT_IMMINENT = "orp_imminent"
+EVENT_STARTED = "orp_started"
+EVENT_FINISHED = "orp_finished"
 #: A warning went out, but no pulse followed: the compressor stopped, left the
-#: band without ramping, defrosted, or the climb was not a flush. Lets a consumer
+#: band without ramping, defrosted, or the climb was not an ORP. Lets a consumer
 #: undo whatever it did on the warning.
-EVENT_CANCELLED = "flush_pulse_cancelled"
+EVENT_CANCELLED = "orp_cancelled"
 
 
 @dataclass(frozen=True)
-class FlushPulseConfig:
+class OilReturnPulseConfig:
     """Thresholds, all measured. Changing one invalidates the figures above."""
 
     #: Upper bound of the low-load band, inclusive. 1500 rpm = 25 Hz.
     low_load_rpm: int = 1500
-    #: Uninterrupted minutes in that band before the unit flushes.
+    #: Uninterrupted minutes in that band before the unit runs an ORP.
     trigger_minutes: float = 60.5
     #: How early the imminent event fires. The ramp alone is about 50 s, which
     #: is too late for anything that has to talk to the machine first: a Modbus
@@ -82,14 +85,14 @@ class FlushPulseConfig:
     lead_seconds: int = 180
     #: Above this the compressor is ramping, not modulating.
     pulse_rpm: int = 2900
-    #: Above this it is not a flush. Only used when the defrost flag is late.
+    #: Above this it is not an ORP. Only used when the defrost flag is late.
     defrost_rpm: int = 3700
-    #: A ramp counts as a flush only if the compressor left the low-load band no
+    #: A ramp counts as an ORP only if the compressor left the low-load band no
     #: longer than this ago. Measured on 30 pulses: 30 s from the last sample in
     #: the band to the first above 2900 rpm. A slower climb, such as the 118 s one
     #: after a defrost, is a load change.
     ramp_window_seconds: int = 90
-    #: Longest a flush runs from the first sample above 2900 rpm to the last.
+    #: Longest an ORP runs from the first sample above 2900 rpm to the last.
     #: Measured 40-60 s; a tank charge that ramps out of the band runs for many
     #: minutes and is dropped once it passes this.
     max_pulse_seconds: int = 120
@@ -109,12 +112,12 @@ class PulseRecord:
 
     @property
     def duration_seconds(self) -> float:
-        """40-60 s for a flush. A defrost runs about 90 s and is not recorded here."""
+        """40-60 s for an ORP. A defrost runs about 90 s and is not recorded here."""
         return (self.ended - self.started).total_seconds()
 
 
 @dataclass
-class FlushPulseTracker:
+class OilReturnPulseTracker:
     """Follows the compressor and says where in the cycle the unit is.
 
     Fed once per poll. Returns the events that the poll caused, so the caller
@@ -128,7 +131,7 @@ class FlushPulseTracker:
     left its forecast columns empty.
     """
 
-    config: FlushPulseConfig = field(default_factory=FlushPulseConfig)
+    config: OilReturnPulseConfig = field(default_factory=OilReturnPulseConfig)
 
     low_load_since: datetime | None = None
     #: Set when a pulse is running. Also the marker for "we are in a pulse".
@@ -139,10 +142,10 @@ class FlushPulseTracker:
     last_pulse: PulseRecord | None = None
     #: Guards against re-announcing the same approach on every poll.
     _imminent_fired: bool = False
-    #: True while a ramp is attributed to defrosting rather than flushing.
+    #: True while a ramp is attributed to defrosting rather than to an ORP.
     _in_defrost: bool = False
     #: Set when the compressor leaves the low-load band upwards: the running time
-    #: in the band at that moment, and when it left. A flush always starts from
+    #: in the band at that moment, and when it left. An ORP always starts from
     #: there; a ramp that does not is an ordinary load change.
     _band_exit_runtime: float | None = None
     _band_exit_at: datetime | None = None
@@ -174,13 +177,13 @@ class FlushPulseTracker:
         return max(0.0, (now - self.low_load_since).total_seconds() / 60)
 
     def expected_at(self) -> datetime | None:
-        """When the unit is expected to flush, or None if the clock is not running."""
+        """When the unit is expected to run an ORP, or None if the clock is not running."""
         if self.low_load_since is None:
             return None
         return self.low_load_since + timedelta(minutes=self.config.trigger_minutes)
 
     def minutes_remaining(self) -> float | None:
-        """Minutes until the unit is expected to flush, or None if the clock is not running."""
+        """Minutes until the unit is expected to run an ORP, or None if the clock is not running."""
         runtime = self.runtime_minutes
         if runtime is None:
             return None
@@ -212,14 +215,14 @@ class FlushPulseTracker:
         if self.pulse_started is not None:
             self.pulse_peak_rpm = max(self.pulse_peak_rpm, rpm)
             if defrosting or self.pulse_peak_rpm > self.config.defrost_rpm:
-                # Not a flush after all. The unit's flag can arrive a poll late,
+                # Not an ORP after all. The unit's flag can arrive a poll late,
                 # so this can happen mid-ramp; drop the pulse without reporting
                 # one, and let the clock restart from the end of the ramp.
                 self._in_defrost = True
                 self._abandon_pulse()
                 return self._cancel()
             if (now - self.pulse_started).total_seconds() > self.config.max_pulse_seconds:
-                # Far longer than a flush: a load change or a tank charge that
+                # Far longer than an ORP: a load change or a tank charge that
                 # happened to climb out of the band.
                 self._abandon_pulse()
                 return self._cancel()
@@ -245,7 +248,7 @@ class FlushPulseTracker:
                 return self._cancel()
             if not self._ramp_started_in_band(now):
                 # Running above 2900 rpm, but not out of the low-load band: a
-                # high-load phase, not a flush.
+                # high-load phase, not an ORP.
                 self.low_load_since = None
                 self._imminent_fired = False
                 return self._cancel()
