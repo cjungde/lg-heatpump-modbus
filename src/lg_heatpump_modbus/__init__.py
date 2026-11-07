@@ -47,10 +47,12 @@ from .metadata import (
     NumberMetadata,
     OptionMetadata,
 )
-from .subsystems import Controls, DeviceInformation, Sensors, States, Switches
+from .subsystems import Controls, DeviceInformation, Limits, Sensors, States, Switches
+from .subsystems.limits import LIMIT_DATAPOINTS
 
 __all__ = [
     "DEFAULT_MODEL",
+    "LIMIT_DATAPOINTS",
     "MODELS",
     "READING_COMPONENTS",
     "SETTING_COMPONENTS",
@@ -70,6 +72,7 @@ __all__ = [
     "LgHeatPump",
     "LgHeatPumpError",
     "LgValueValidationError",
+    "Limits",
     "ModelDefinition",
     "NumberMetadata",
     "OduOperationCycle",
