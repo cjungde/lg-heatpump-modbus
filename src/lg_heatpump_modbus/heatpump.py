@@ -17,7 +17,8 @@ from modbus_connection import (
 from .configurations.models import DEFAULT_MODEL, ModelDefinition, get_model
 from .data_model import LgComponent
 from .logic import gate_flow_rate
-from .subsystems import Controls, DeviceInformation, Sensors, States, Switches
+from .subsystems import Controls, DeviceInformation, Limits, Sensors, States, Switches
+from .subsystems.limits import LIMIT_DATAPOINTS
 
 if TYPE_CHECKING:
     from modbus_connection import ModbusUnit
@@ -81,6 +82,8 @@ class LgHeatPump:
         self.states = States(unit)
         self.controls = Controls(unit)
         self.switches = Switches(unit)
+        self._served_limits: tuple[str, ...] = ()
+        self.limits = self._build_limits(())
 
         self._is_set_up = False
         for component in self.components:
@@ -94,7 +97,7 @@ class LgHeatPump:
 
     @debug.setter
     def debug(self, value: bool) -> None:
-        for component in self.components:
+        for component in (*self.components, self.limits):
             component.debug = value
 
     @property
@@ -104,8 +107,66 @@ class LgHeatPump:
 
     @property
     def component_names(self) -> tuple[str, ...]:
-        """Return the attribute name of every sub-system, identity first."""
-        return ("info", *READING_COMPONENTS, *SETTING_COMPONENTS)
+        """Return the attribute name of every polled sub-system, identity first.
+
+        ``limits`` is included only once a consumer has declared one of its
+        datapoints served; an unserved limit would cost a timeout on every read.
+        """
+        return ("info", *READING_COMPONENTS, *self._setting_components)
+
+    @property
+    def served_limits(self) -> tuple[str, ...]:
+        """Return the optional limits declared served, in probing order."""
+        return self._served_limits
+
+    def set_served_limits(self, names: Iterable[str]) -> None:
+        """Declare which optional limits this unit serves; only those are polled.
+
+        Nothing is polled until this is called, so a consumer that never probes
+        sees no extra traffic. Raises ``ValueError`` for a name that is not one
+        of :data:`~lg_heatpump_modbus.subsystems.limits.LIMIT_DATAPOINTS`.
+        """
+        wanted = set(names)
+        if unknown := wanted - set(LIMIT_DATAPOINTS):
+            raise ValueError(f"unknown limit(s): {', '.join(sorted(unknown))}")
+        self._served_limits = tuple(n for n in LIMIT_DATAPOINTS if n in wanted)
+        self.limits = self._build_limits(self._served_limits)
+
+    async def async_probe_limit(self, name: str) -> bool | None:
+        """Ask the unit once whether it serves the optional limit ``name``.
+
+        Returns ``True`` if the register answered, ``False`` if the unit refused
+        it or stayed silent, and ``None`` if the link itself failed, which says
+        nothing about the register. A silence is read as "not served" because
+        that is how these units answer an address they lack; a caller must only
+        probe right after a poll that proved the link alive, or a dead gateway
+        is remembered as missing hardware. Each probe reads one register, so a
+        silent one costs one request timeout.
+        """
+        if name not in LIMIT_DATAPOINTS:
+            raise ValueError(f"unknown limit: {name}")
+        probe = Limits(self._unit)
+        probe.restrict_fields([name])
+        try:
+            await probe.async_update(notify=False)
+        except ModbusConnectionError:
+            return None
+        except ModbusError:  # a refusal, or a timeout
+            return False
+        return True
+
+    @property
+    def _setting_components(self) -> tuple[str, ...]:
+        if self._served_limits:
+            return (*SETTING_COMPONENTS, "limits")
+        return SETTING_COMPONENTS
+
+    def _build_limits(self, served: tuple[str, ...]) -> Limits:
+        """Return a limits component reading exactly ``served``."""
+        limits = Limits(self._unit)
+        limits.restrict_fields(served)
+        limits.debug = getattr(self, "sensors", limits).debug
+        return limits
 
     @property
     def water_outlet_temperature_circuit_1(self) -> float | None:
@@ -207,7 +268,7 @@ class LgHeatPump:
         """Refresh what the heat pump has been configured to do."""
         if not self._is_set_up:
             await self._async_setup()
-        report = await self._async_poll(SETTING_COMPONENTS, UpdateReport())
+        report = await self._async_poll(self._setting_components, UpdateReport())
         self._notify(report)
         return report
 
@@ -216,7 +277,7 @@ class LgHeatPump:
         if not self._is_set_up:
             await self._async_setup()
         report = await self._async_poll(READING_COMPONENTS, UpdateReport())
-        await self._async_poll(SETTING_COMPONENTS, report)
+        await self._async_poll(self._setting_components, report)
         self._notify(report)
         return report
 

@@ -78,13 +78,25 @@ def _writable(
     *,
     min_value: float | int | None = None,
     max_value: float | int | None = None,
+    validator: Callable[[Any], Any] | None = None,
 ) -> bool | Callable[[Any], Any]:
-    """Return the ``writable`` argument the framework field should be given."""
+    """Return the ``writable`` argument the framework field should be given.
+
+    ``validator`` runs after the range check, for rules a range cannot state
+    (a register whose valid values have a hole in them).
+    """
     if not writable:
         return False
-    if min_value is None and max_value is None:
+    if min_value is None and max_value is None and validator is None:
         return True
-    return _number_validator(min_value=min_value, max_value=max_value)
+    in_range = _number_validator(min_value=min_value, max_value=max_value)
+    if validator is None:
+        return in_range
+
+    def validate(value: Any) -> Any:
+        return validator(in_range(value))
+
+    return validate
 
 
 def _number_metadata(
@@ -175,6 +187,7 @@ def integer(
     min_value: int | None = None,
     max_value: int | None = None,
     writable: bool = False,
+    validator: Callable[[Any], Any] | None = None,
     description: str | None = None,
 ) -> RegisterField[int]:
     """Declare an unscaled integer register."""
@@ -182,7 +195,9 @@ def integer(
         address,
         signed=signed,
         unit=unit,
-        writable=_writable(writable, min_value=min_value, max_value=max_value),
+        writable=_writable(
+            writable, min_value=min_value, max_value=max_value, validator=validator
+        ),
     )
     return attach_metadata(
         field,
