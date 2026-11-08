@@ -59,6 +59,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from statistics import median
 
 #: Event names returned by `OilReturnPulseTracker.update`. An integration that fires
 #: one bus event and distinguishes by `type` can build device triggers on them.
@@ -96,6 +97,24 @@ class OilReturnPulseConfig:
     #: Measured 40-60 s; a tank charge that ramps out of the band runs for many
     #: minutes and is dropped once it passes this.
     max_pulse_seconds: int = 120
+    #: Learn the trigger from the pulses this tracker has seen, instead of using
+    #: `trigger_minutes` as it stands. Off by default: the fixed value is what the
+    #: measurement above supports, and an owner turns learning on for a unit
+    #: whose pulses come consistently earlier or later.
+    #:
+    #: What is learned is the running time at the start of the ramp, the moment
+    #: a warning has to beat. On the reference unit that was 59.8-60.2 min over
+    #: four pulses on 08.11.2026, against 60.5 here: the fixed value warns about
+    #: 0.3 min late, which a 60 s lead cannot absorb.
+    learn_trigger: bool = False
+    #: How many of the most recent pulses the learned trigger is the median of.
+    learn_window: int = 5
+    #: How many pulses are needed before the learned value replaces the fixed one.
+    learn_min_pulses: int = 3
+    #: A pulse whose running time is further than this from `trigger_minutes` is
+    #: not learned from: after a restart the unit's own timer was already running,
+    #: and that pulse says nothing about the trigger.
+    learn_max_deviation_minutes: float = 1.5
 
 
 @dataclass(frozen=True)
@@ -151,6 +170,8 @@ class OilReturnPulseTracker:
     _band_exit_at: datetime | None = None
     #: A warning went out and neither a finish nor a cancellation has followed.
     _announced: bool = False
+    #: Running times at the ramp of the most recent pulses, oldest first.
+    _learned_runtimes: list[float] = field(default_factory=list)
 
     # -- what the entities read ------------------------------------------
 
@@ -171,6 +192,25 @@ class OilReturnPulseTracker:
 
     _now: datetime | None = None
 
+    @property
+    def trigger_minutes(self) -> float:
+        """The running time in the band after which the next pulse is expected.
+
+        The learned median when learning is on and enough pulses were seen,
+        otherwise the configured value.
+        """
+        learned = self.learned_trigger_minutes
+        return learned if learned is not None else self.config.trigger_minutes
+
+    @property
+    def learned_trigger_minutes(self) -> float | None:
+        """The learned trigger, or None while learning is off or still too short."""
+        if not self.config.learn_trigger:
+            return None
+        if len(self._learned_runtimes) < max(1, self.config.learn_min_pulses):
+            return None
+        return median(self._learned_runtimes)
+
     def _runtime_at(self, now: datetime | None) -> float | None:
         if self.low_load_since is None or now is None:
             return None
@@ -180,14 +220,14 @@ class OilReturnPulseTracker:
         """When the unit is expected to run an ORP, or None if the clock is not running."""
         if self.low_load_since is None:
             return None
-        return self.low_load_since + timedelta(minutes=self.config.trigger_minutes)
+        return self.low_load_since + timedelta(minutes=self.trigger_minutes)
 
     def minutes_remaining(self) -> float | None:
         """Minutes until the unit is expected to run an ORP, or None if the clock is not running."""
         runtime = self.runtime_minutes
         if runtime is None:
             return None
-        return max(0.0, self.config.trigger_minutes - runtime)
+        return max(0.0, self.trigger_minutes - runtime)
 
     # -- being fed -------------------------------------------------------
 
@@ -235,6 +275,7 @@ class OilReturnPulseTracker:
                     peak_rpm=self.pulse_peak_rpm,
                     runtime_minutes=self.pulse_runtime_minutes,
                 )
+                self._learn(self.pulse_runtime_minutes)
                 self._clear_pulse()
                 # The clock restarts only once the compressor is back in the
                 # band, which the next poll decides.
@@ -323,9 +364,20 @@ class OilReturnPulseTracker:
         self._band_exit_runtime = None
         self._band_exit_at = None
         self._announced = False
+        self._learned_runtimes = []
         self._now = None
 
     # -- internals -------------------------------------------------------
+
+    def _learn(self, runtime: float | None) -> None:
+        """Remember the running time of a completed pulse, if it is plausible."""
+        if runtime is None:
+            return
+        deviation = abs(runtime - self.config.trigger_minutes)
+        if deviation > self.config.learn_max_deviation_minutes:
+            return
+        self._learned_runtimes.append(runtime)
+        del self._learned_runtimes[: -max(1, self.config.learn_window)]
 
     def _cancel(self) -> tuple[str, ...]:
         """Withdraw an outstanding warning, if there is one."""
