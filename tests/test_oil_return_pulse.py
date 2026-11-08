@@ -372,6 +372,91 @@ def test_an_earlier_exit_does_not_lend_its_runtime_to_a_later_pulse() -> None:
 # --- replay over recorded data ------------------------------------------
 
 
+# --- the learned trigger ------------------------------------------------
+
+
+def _cycles(tracker, minutes_list, start=T0):
+    """Run one low-load phase and pulse per entry, each ending in a stop.
+
+    The ramp leaves the band one poll after the hold, so a pulse after
+    ``minutes`` of holding is recorded with ``minutes + 1/6`` of running time.
+    """
+    now = start
+    for minutes in minutes_list:
+        samples = _hold(1500, minutes) + [960] + RAMP + [3600, 3600, 3300, 1620, 0]
+        _run(tracker, samples, start=now)
+        now += POLL * len(samples)
+    return now
+
+
+def test_learning_is_off_by_default() -> None:
+    """Without the option nothing changes: the fixed 60.5 minutes stay."""
+    t = _tracker()
+    now = _cycles(t, [59.5, 59.5, 59.5])
+    assert t.learned_trigger_minutes is None
+    assert t.trigger_minutes == 60.5
+    _run(t, _hold(1500, 10), start=now)
+    assert t.expected_at() == now + timedelta(minutes=60.5)
+
+
+def test_the_fixed_value_is_used_until_enough_pulses_were_seen() -> None:
+    t = _tracker(learn_trigger=True)
+    _cycles(t, [59.5, 59.5])
+    assert t.learned_trigger_minutes is None
+    assert t.trigger_minutes == 60.5
+
+
+def test_the_trigger_is_the_median_of_the_recent_pulses() -> None:
+    """Measured 08.11.2026: 59.8-60.2 min at the ramp, against 60.5 fixed."""
+    t = _tracker(learn_trigger=True)
+    now = _cycles(t, [59.5, 60.5, 59.0])
+    learned = t.learned_trigger_minutes
+    assert learned is not None
+    assert round(learned, 2) == round(59.5 + 1 / 6, 2)
+
+    _run(t, _hold(1500, 10), start=now)
+    assert t.expected_at() == now + timedelta(minutes=learned)
+
+
+def test_the_learned_trigger_moves_the_warning_earlier() -> None:
+    """With a 60 s lead the warning must come a minute before the learned trigger."""
+    t = _tracker(learn_trigger=True, lead_seconds=60)
+    now = _cycles(t, [59.5, 59.5, 59.5])
+    events = _run(t, _hold(1500, 59.5), start=now)
+    ((fired_at, kinds),) = events
+    assert kinds == (fp.EVENT_IMMINENT,)
+    fired_after = (fired_at - now).total_seconds() / 60
+    learned = 59.5 + 1 / 6
+    assert learned - 1 - 1 / 6 <= fired_after <= learned - 1
+
+
+def test_only_the_most_recent_pulses_count() -> None:
+    t = _tracker(learn_trigger=True, learn_window=3)
+    _cycles(t, [59.0, 59.0, 59.0, 60.0, 60.0, 60.0])
+    assert round(t.learned_trigger_minutes, 2) == round(60.0 + 1 / 6, 2)
+
+
+def test_an_implausible_runtime_is_not_learned() -> None:
+    """After a restart the unit's timer was already running: a short runtime says nothing."""
+    t = _tracker(learn_trigger=True)
+    _cycles(t, [59.5, 59.5, 59.5, 40.0, 40.0])
+    assert round(t.learned_trigger_minutes, 2) == round(59.5 + 1 / 6, 2)
+
+
+def test_a_pulse_without_a_runtime_is_not_learned() -> None:
+    t = _tracker(learn_trigger=True)
+    t._learn(None)
+    assert t._learned_runtimes == []
+
+
+def test_reset_forgets_what_was_learned() -> None:
+    t = _tracker(learn_trigger=True)
+    _cycles(t, [59.5, 59.5, 59.5])
+    t.reset()
+    assert t.learned_trigger_minutes is None
+    assert t.trigger_minutes == 60.5
+
+
 def _utc(text: str) -> datetime:
     return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
 
