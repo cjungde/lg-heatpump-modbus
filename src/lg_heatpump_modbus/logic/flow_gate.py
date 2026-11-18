@@ -2,12 +2,14 @@
 
 Mechanism
 ---------
-The flow sensor is a SIKA VVX20 vortex meter with a measuring range of
-5-80 l/min. It cannot measure below the start of its range, so with the pump
-stopped the heat pump reports exactly 5.0 l/min, which is the range floor and
-not a flow. Anything that integrates the flow (thermal power ``flow x spread x
-4186 J/(kg K)``) then books heat that was never delivered: roughly 350 W per
-1 K of residual spread at standstill.
+LG documents a flow sensor range of 5-80 l/min for R32 and R290 units; the
+service manual of one R32 hydro unit (HN1600MB) names a SIKA VVX20 vortex
+meter. The sensor model may differ between variants. The sensor cannot measure
+below the start of its range, so with the pump stopped the heat pump reports
+exactly 5.0 l/min, which is the range floor and not a flow. Anything that
+integrates the flow (thermal power ``flow x spread x 4186 J/(kg K)``) then
+books heat that was never delivered: roughly 350 W per 1 K of residual spread
+at standstill.
 
 The pump bit is the gate, not a threshold on the value being corrected: it is
 a signal the device itself provides.
@@ -37,7 +39,7 @@ from typing import Final
 #: Registry key of this function.
 FLOW_GATE_KEY: Final = "flow_gate"
 
-#: Start of the flow sensor's measuring range in l/min (SIKA VVX20, 5-80 l/min).
+#: Start of the flow sensor's documented measuring range (5-80 l/min), in l/min.
 #: The value the heat pump reports for "no flow"; documentation only, the gate
 #: does not compare against it.
 FLOW_SENSOR_RANGE_FLOOR: Final = 5.0
