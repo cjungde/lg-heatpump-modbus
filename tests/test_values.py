@@ -33,7 +33,7 @@ async def test_update_refreshes_every_component(pump: LgHeatPump) -> None:
         ("dhw_tank_temperature", 48.2),
         ("solar_collector_temperature", 0.0),
         ("room_air_temperature_circuit_1", 21.4),
-        ("water_flow_rate", 17.2),
+        ("water_flow_rate_raw", 17.2),
         ("water_outlet_temperature_circuit_2", 28.8),
         ("room_air_temperature_circuit_2", 20.9),
         ("outdoor_temperature", -4.2),

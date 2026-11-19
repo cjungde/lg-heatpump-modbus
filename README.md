@@ -164,7 +164,7 @@ silent_mode = discrete_input(7, description="Silent mode active")
 | 5 | `dhw_tank_temperature` | 0.1 | °C |
 | 6 | `solar_collector_temperature` | 0.1 | °C |
 | 7 | `room_air_temperature_circuit_1` | 0.1 | °C |
-| 8 | `water_flow_rate` | 0.1 | L/min |
+| 8 | `water_flow_rate_raw` | 0.1 | L/min |
 | 9 | `water_outlet_temperature_circuit_2` | 0.1 | °C |
 | 10 | `room_air_temperature_circuit_2` | 0.1 | °C |
 | 11 | `energy_state` | enum | |

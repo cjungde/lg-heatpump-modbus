@@ -100,15 +100,18 @@ class Sensors(LgComponent):
 
     # TODO verify value of 0 and ~5
     # verified by G-nn-r: 5.0, 16.7, 16.8, 16.9, 17.0, 17.2, 17.3
-    water_flow_rate = gauge(
+    water_flow_rate_raw = gauge(
         8,
         0.1,
         signed=False,
         unit=LITRES_PER_MINUTE,
         digits=1,
-        description="Water flow rate through the heat pump",
+        description="Water flow rate through the heat pump, as the unit reports it",
     )
-    """Water flow rate."""
+    """Water flow rate as reported, including the sensor's range floor with the pump off.
+
+    The flow to use is :attr:`LgHeatPump.water_flow_rate`.
+    """
 
     # verified by G-nn-r: 22.8, 23.2, 23.9, 24.2, 24.9, 25.7, ..., 28.6, 28.9, 29.3, 29.7, 30.1, 30.5, 30.8, 31.2, 32.4
     # TODO comment about relationship to water_outlet_temperature
