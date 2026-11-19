@@ -59,8 +59,7 @@ async def test_device_reports_the_gated_value(pump: LgHeatPump, unit: MockModbus
     unit.input[FLOW_REGISTER] = 50
     await pump.async_update()
 
-    assert pump.sensors.water_flow_rate == 5.0
-    assert pump.water_flow_rate_raw == 5.0
+    assert pump.sensors.water_flow_rate_raw == 5.0
     assert pump.water_flow_rate == 0.0
 
 
@@ -69,7 +68,7 @@ async def test_device_reports_the_real_flow_while_the_pump_runs(
 ) -> None:
     await pump.async_update()
 
-    assert pump.water_flow_rate_raw == 17.2
+    assert pump.sensors.water_flow_rate_raw == 17.2
     assert pump.water_flow_rate == 17.2
 
 
@@ -84,7 +83,7 @@ async def test_debug_mode_returns_the_raw_value(pump: LgHeatPump, unit: MockModb
 
 
 async def test_value_is_none_before_the_first_read(pump: LgHeatPump) -> None:
-    assert pump.water_flow_rate_raw is None
+    assert pump.sensors.water_flow_rate_raw is None
     assert pump.water_flow_rate is None
 
 
@@ -94,7 +93,7 @@ async def test_register_model_still_returns_the_device_value(pump: LgHeatPump, u
     unit.input[FLOW_REGISTER] = 50
     await pump.async_update()
 
-    assert pump.sensors.water_flow_rate == 5.0
+    assert pump.sensors.water_flow_rate_raw == 5.0
 
 
 # --- replay over recorded data -------------------------------------------------------

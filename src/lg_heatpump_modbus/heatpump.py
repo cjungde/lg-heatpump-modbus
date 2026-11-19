@@ -125,17 +125,13 @@ class LgHeatPump:
 
         With the pump stopped the flow sensor reports its range floor (5.0 l/min),
         which is not a flow. This value is corrected with the pump bit (see
-        :func:`~lg_heatpump_modbus.logic.gate_flow_rate`). In :attr:`debug` mode, and
-        through :attr:`water_flow_rate_raw`, the value the heat pump reported is returned.
+        :func:`~lg_heatpump_modbus.logic.gate_flow_rate`). In :attr:`debug` mode the
+        value the heat pump reported is returned; it is always available as
+        ``sensors.water_flow_rate_raw``.
         """
         if self.debug:
-            return self.water_flow_rate_raw
-        return gate_flow_rate(self.water_flow_rate_raw, self.states.water_pump)
-
-    @property
-    def water_flow_rate_raw(self) -> float | None:
-        """Return the water flow rate exactly as the heat pump reported it."""
-        return self.sensors.water_flow_rate
+            return self.sensors.water_flow_rate_raw
+        return gate_flow_rate(self.sensors.water_flow_rate_raw, self.states.water_pump)
 
     @property
     def manufacturer(self) -> str:
