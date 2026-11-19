@@ -105,6 +105,7 @@ def _print_derived(pump: LgHeatPump) -> None:
         "  temperature drop circuit 2          "
         f"{_fmt(pump.sensors.water_temperature_drop_circuit_2)} K"
     )
+    print(f"  water flow rate                     {_fmt(pump.water_flow_rate)} l/min")
     print(f"  backup heater steps                 {_fmt(pump.states.backup_heater_steps)}")
 
 
@@ -152,6 +153,7 @@ def _snapshot(
             "water_outlet_temperature_circuit_1": pump.water_outlet_temperature_circuit_1,
             "water_temperature_difference": pump.sensors.water_temperature_difference,
             "water_temperature_drop_circuit_2": pump.sensors.water_temperature_drop_circuit_2,
+            "water_flow_rate": pump.water_flow_rate,
             "backup_heater_steps": pump.states.backup_heater_steps,
         },
     }

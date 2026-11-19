@@ -94,6 +94,7 @@ async def test_printing_a_read_heat_pump(
     assert "outdoor_temperature" in out
     assert "-4.2" in out
     assert "3720" in out  # derived compressor speed
+    assert "water flow rate                     17.2 l/min" in out
 
 
 async def test_json_dump_snapshot(
@@ -120,6 +121,26 @@ async def test_json_dump_snapshot(
     assert payload["debug"] is False
     assert payload["components"]["sensors"]["outdoor_temperature"] == -4.2
     assert payload["derived"]["compressor_speed"] == 3720
+    assert payload["derived"]["water_flow_rate"] == 17.2
+    assert payload["components"]["sensors"]["water_flow_rate_raw"] == 17.2
+
+
+async def test_snapshot_lists_the_gated_flow_under_derived(
+    query: ModuleType,
+    pump: LgHeatPump,
+    unit: MockModbusUnit,
+) -> None:
+    """With the pump off the snapshot keeps the reported 5.0 and derives 0.0."""
+    unit.discrete_inputs[1] = False  # water pump
+    unit.input[8] = 50  # water_flow_rate_raw -> 5.0 l/min, the range floor
+    await pump.async_update()
+
+    args = query._parse_args(["192.168.1.50"])
+    snapshot = query._snapshot(pump, elapsed_ms=1.0, modbus_reads=7, failed={}, args=args)
+
+    assert snapshot["components"]["sensors"]["water_flow_rate_raw"] == 5.0
+    assert "water_flow_rate" not in snapshot["components"]["sensors"]
+    assert snapshot["derived"]["water_flow_rate"] == 0.0
 
 
 def test_absent_values_print_as_a_dash(query: ModuleType) -> None:
