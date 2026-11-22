@@ -28,7 +28,7 @@ INPUT_REGISTERS: dict[int, int] = {
     5: 482,  # dhw_tank_temperature -> 48.2 °C
     6: 0,  # solar_collector_temperature -> 0.0 °C
     7: 214,  # room_air_temperature_circuit_1 -> 21.4 °C
-    8: 172,  # water_flow_rate -> 17.2 L/min
+    8: 172,  # water_flow_rate_raw -> 17.2 L/min
     9: 288,  # water_outlet_temperature_circuit_2 -> 28.8 °C
     10: 209,  # room_air_temperature_circuit_2 -> 20.9 °C
     11: 2,  # energy_state -> NORMAL
