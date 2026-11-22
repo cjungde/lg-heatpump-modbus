@@ -98,7 +98,6 @@ class Sensors(LgComponent):
     )
     """Room air temperature of circuit 1."""
 
-    # TODO verify value of 0 and ~5
     # verified by G-nn-r: 5.0, 16.7, 16.8, 16.9, 17.0, 17.2, 17.3
     water_flow_rate_raw = gauge(
         8,
